@@ -55,6 +55,42 @@ def fetch_air_quality() -> pd.DataFrame | None:
     return df
 
 
+@st.cache_data(ttl=600)
+def generate_ai_summary(
+    temp: float, rh: float, precip: float, wind: float,
+    hi: float, wb: float, aqi: float | None,
+    sunrise: str, sunset: str, next_hours_summary: str,
+) -> str | None:
+    import anthropic
+
+    api_key = st.secrets.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    client = anthropic.Anthropic(api_key=api_key)
+    prompt = (
+        f"Current weather conditions:\n"
+        f"- Temperature: {temp:.1f}°C (feels like {hi:.1f}°C heat index)\n"
+        f"- Wet bulb: {wb:.1f}°C\n"
+        f"- Humidity: {rh:.0f}%\n"
+        f"- Wind: {wind:.0f} km/h\n"
+        f"- Precipitation: {precip:.1f} mm/h\n"
+        f"- Air quality: {f'{aqi:.0f} AQI' if aqi is not None else 'unknown'}\n"
+        f"- Sunrise: {sunrise}, Sunset: {sunset}\n"
+        f"\nComing up:\n{next_hours_summary}\n"
+        f"\nWrite 2 short, punchy sentences. First: what it feels like right now. "
+        f"Second: what's changing in the next few hours. No comma splices. Keep it under 40 words total."
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text
+    except anthropic.APIError:
+        return None
+
+
 HISTORICAL_URL = "https://raw.githubusercontent.com/nuuuwan/weather_lk/data/data_by_place/81.70E-7.72N-Batticaloa.json"
 
 
@@ -334,14 +370,28 @@ def main():
         aqi_current = aqi_df.iloc[aqi_idx]
         aqi = aqi_current["us_aqi"]
 
-    summary = current_conditions_summary(temp, rh, hi, precip)
-    st.markdown(f"*{summary}*")
-
     today_idx = daily["time"].index(now.strftime("%Y-%m-%d")) if now.strftime("%Y-%m-%d") in daily["time"] else 0
     sunrise = daily["sunrise"][today_idx].split("T")[1]
     sunset = daily["sunset"][today_idx].split("T")[1]
-
     wind = current["wind_speed_10m"]
+
+    summary = current_conditions_summary(temp, rh, hi, precip)
+    st.markdown(f"*{summary}*")
+
+    next_hours = df[(df.index > now) & (df.index <= now + pd.Timedelta(hours=6))]
+    next_hours_lines = []
+    for _, row in next_hours.iterrows():
+        h = row.name.strftime("%H:%M")
+        next_hours_lines.append(f"{h}: {row['temperature_2m']:.0f}°C, {row['relative_humidity_2m']:.0f}% RH, {row['precipitation']:.1f}mm rain, {row['wind_speed_10m']:.0f}km/h wind")
+    next_hours_summary = "\n".join(next_hours_lines)
+
+    ai_summary = generate_ai_summary(
+        round(temp, 1), round(rh, 0), round(precip, 1), round(wind, 0),
+        round(hi, 1), round(wb, 1), round(aqi, 0) if aqi is not None else None,
+        sunrise, sunset, next_hours_summary,
+    )
+    if ai_summary:
+        st.markdown(ai_summary)
 
     col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns(9)
     col1.metric("Temperature", f"{temp:.1f} °C")
