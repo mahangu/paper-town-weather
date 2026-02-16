@@ -317,7 +317,7 @@ def main():
 
     wind = current["wind_speed_10m"]
 
-    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
+    col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns(9)
     col1.metric("Temperature", f"{temp:.1f} °C")
     col2.metric("Heat Index", f"{hi:.1f} °C", delta=f"{hi - temp:+.1f} °C from actual", delta_color="inverse")
     col3.metric("Apparent Temp", f"{apparent:.1f} °C", delta=f"{apparent - temp:+.1f} °C from actual", delta_color="inverse")
@@ -325,7 +325,8 @@ def main():
     col5.metric("Humidity", f"{rh:.0f}%")
     col6.metric("Wind", f"{wind:.0f} km/h")
     col7.metric("Air Quality", f"{aqi:.0f} AQI")
-    col8.metric("Sunrise / Sunset", f"{sunrise} / {sunset}")
+    col8.metric("Sunrise", sunrise)
+    col9.metric("Sunset", sunset)
 
     df["heat_index"] = df.apply(
         lambda row: compute_heat_index(row["temperature_2m"], row["relative_humidity_2m"]),
