@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 
 import pytz
@@ -15,7 +16,7 @@ def fetch_weather() -> tuple[pd.DataFrame, dict]:
     params = {
         "latitude": LAT,
         "longitude": LON,
-        "hourly": "temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,rain,uv_index",
+        "hourly": "temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,rain,uv_index,apparent_temperature",
         "daily": "sunrise,sunset",
         "past_hours": 24,
         "forecast_days": 3,
@@ -81,6 +82,18 @@ def heat_index_category(hi_c: float) -> str:
     return "Extreme Danger"
 
 
+def compute_wet_bulb(temp_c: float, rh: float) -> float:
+    T = temp_c
+    R = rh
+    return (
+        T * math.atan(0.151977 * math.sqrt(R + 8.313659))
+        + math.atan(T + R)
+        - math.atan(R - 1.676331)
+        + 0.00391838 * R ** 1.5 * math.atan(0.023101 * R)
+        - 4.686035
+    )
+
+
 def current_conditions_summary(temp: float, rh: float, hi: float, precip: float) -> str:
     parts = []
     if hi >= 39:
@@ -108,7 +121,7 @@ def current_conditions_summary(temp: float, rh: float, hi: float, precip: float)
 
 
 def find_outdoor_windows(df: pd.DataFrame) -> list[dict]:
-    comfortable = (df["heat_index"] < 27) & (df["precipitation"] <= 2)
+    comfortable = (df["heat_index"] < 27) & (df["wet_bulb"] < 24) & (df["precipitation"] <= 2)
     groups = (comfortable != comfortable.shift()).cumsum()
     windows = []
     for _, group in df[comfortable].groupby(groups[comfortable]):
@@ -155,6 +168,16 @@ def build_forecast_chart(df: pd.DataFrame) -> go.Figure:
     fig.add_trace(go.Scatter(
         x=df.index, y=df["heat_index"],
         name="Heat Index", line=dict(color="#D62828", width=2, dash="dash"),
+    ), row=1, col=1, secondary_y=False)
+
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["apparent_temperature"],
+        name="Apparent Temp", line=dict(color="#E85D04", width=2, dash="dashdot"),
+    ), row=1, col=1, secondary_y=False)
+
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df["wet_bulb"],
+        name="Wet Bulb", line=dict(color="#023E8A", width=2, dash="dot"),
     ), row=1, col=1, secondary_y=False)
 
     fig.add_trace(go.Scatter(
@@ -225,7 +248,8 @@ def main():
     rh = current["relative_humidity_2m"]
     precip = current["precipitation"]
     hi = compute_heat_index(temp, rh)
-    category = heat_index_category(hi)
+    wb = compute_wet_bulb(temp, rh)
+    apparent = current["apparent_temperature"]
 
     summary = current_conditions_summary(temp, rh, hi, precip)
     st.markdown(f"*{summary}*")
@@ -236,15 +260,21 @@ def main():
 
     wind = current["wind_speed_10m"]
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
     col1.metric("Temperature", f"{temp:.1f} °C")
-    col2.metric("Heat Index", f"{hi:.1f} °C — {category}", delta=f"{hi - temp:+.1f} °C from actual")
-    col3.metric("Humidity", f"{rh:.0f}%")
-    col4.metric("Wind", f"{wind:.0f} km/h")
-    col5.metric("Sunrise / Sunset", f"{sunrise} / {sunset}")
+    col2.metric("Heat Index", f"{hi:.1f} °C", delta=f"{hi - temp:+.1f} °C from actual", delta_color="inverse")
+    col3.metric("Apparent Temp", f"{apparent:.1f} °C", delta=f"{apparent - temp:+.1f} °C from actual", delta_color="inverse")
+    col4.metric("Wet Bulb Temp", f"{wb:.1f} °C")
+    col5.metric("Humidity", f"{rh:.0f}%")
+    col6.metric("Wind", f"{wind:.0f} km/h")
+    col7.metric("Sunrise / Sunset", f"{sunrise} / {sunset}")
 
     df["heat_index"] = df.apply(
         lambda row: compute_heat_index(row["temperature_2m"], row["relative_humidity_2m"]),
+        axis=1,
+    )
+    df["wet_bulb"] = df.apply(
+        lambda row: compute_wet_bulb(row["temperature_2m"], row["relative_humidity_2m"]),
         axis=1,
     )
 

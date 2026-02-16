@@ -13,6 +13,8 @@ def test_fetch_returns_dataframe_with_expected_columns(monkeypatch):
             "cloud_cover": [20, 30, 40],
             "precipitation": [0.0, 0.0, 0.1],
             "rain": [0.0, 0.0, 0.1],
+            "uv_index": [0.0, 0.0, 0.5],
+            "apparent_temperature": [29.0, 28.5, 28.0],
         },
         "daily": {
             "time": ["2026-02-15"],

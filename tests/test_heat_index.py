@@ -61,3 +61,21 @@ def test_heat_index_category_danger():
 def test_heat_index_category_extreme_danger():
     from app import heat_index_category
     assert heat_index_category(55.0) == "Extreme Danger"
+
+
+def test_wet_bulb_moderate():
+    from app import compute_wet_bulb
+    result = compute_wet_bulb(25.0, 50.0)
+    assert 16 < result < 19
+
+
+def test_wet_bulb_hot_humid():
+    from app import compute_wet_bulb
+    result = compute_wet_bulb(35.0, 90.0)
+    assert result > 30
+
+
+def test_wet_bulb_hot_dry():
+    from app import compute_wet_bulb
+    result = compute_wet_bulb(35.0, 20.0)
+    assert result < 22
