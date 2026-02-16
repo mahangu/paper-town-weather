@@ -12,17 +12,18 @@ TIMEZONE = "Asia/Colombo"
 
 
 @st.cache_data(ttl=600)
-def fetch_weather() -> tuple[pd.DataFrame, dict]:
+def fetch_weather() -> tuple[pd.DataFrame, dict] | None:
     params = {
         "latitude": LAT,
         "longitude": LON,
         "hourly": "temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,rain,uv_index,apparent_temperature",
         "daily": "sunrise,sunset",
-        "past_hours": 24,
         "forecast_days": 3,
         "timezone": TIMEZONE,
     }
-    resp = requests.get("https://api.open-meteo.com/v1/forecast", params=params)
+    resp = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=15)
+    if resp.status_code == 429:
+        return None
     resp.raise_for_status()
     result = resp.json()
     df = pd.DataFrame(result["hourly"])
@@ -34,16 +35,17 @@ def fetch_weather() -> tuple[pd.DataFrame, dict]:
 
 
 @st.cache_data(ttl=600)
-def fetch_air_quality() -> pd.DataFrame:
+def fetch_air_quality() -> pd.DataFrame | None:
     params = {
         "latitude": LAT,
         "longitude": LON,
         "hourly": "us_aqi,pm2_5,pm10",
-        "past_hours": 24,
         "forecast_days": 3,
         "timezone": TIMEZONE,
     }
-    resp = requests.get("https://air-quality-api.open-meteo.com/v1/air-quality", params=params)
+    resp = requests.get("https://air-quality-api.open-meteo.com/v1/air-quality", params=params, timeout=15)
+    if resp.status_code == 429:
+        return None
     resp.raise_for_status()
     result = resp.json()
     df = pd.DataFrame(result["hourly"])
@@ -307,7 +309,11 @@ def main():
     st.set_page_config(page_title="Paper Town Weather", layout="wide")
     st.title("Paper Town Weather")
 
-    df, daily = fetch_weather()
+    weather = fetch_weather()
+    if weather is None:
+        st.warning("Weather API rate limited. Please wait a few minutes and refresh.")
+        st.stop()
+    df, daily = weather
     aqi_df = fetch_air_quality()
     hist_df = fetch_historical()
 
@@ -322,9 +328,11 @@ def main():
     wb = compute_wet_bulb(temp, rh)
     apparent = current["apparent_temperature"]
 
-    aqi_idx = aqi_df.index.get_indexer([now], method="nearest")[0]
-    aqi_current = aqi_df.iloc[aqi_idx]
-    aqi = aqi_current["us_aqi"]
+    aqi = None
+    if aqi_df is not None:
+        aqi_idx = aqi_df.index.get_indexer([now], method="nearest")[0]
+        aqi_current = aqi_df.iloc[aqi_idx]
+        aqi = aqi_current["us_aqi"]
 
     summary = current_conditions_summary(temp, rh, hi, precip)
     st.markdown(f"*{summary}*")
@@ -342,7 +350,7 @@ def main():
     col4.metric("Wet Bulb Temp", f"{wb:.1f} °C")
     col5.metric("Humidity", f"{rh:.0f}%")
     col6.metric("Wind", f"{wind:.0f} km/h")
-    col7.metric("Air Quality", f"{aqi:.0f} AQI")
+    col7.metric("Air Quality", f"{aqi:.0f} AQI" if aqi is not None else "N/A")
     col8.metric("Sunrise", sunrise)
     col9.metric("Sunset", sunset)
 

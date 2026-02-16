@@ -24,6 +24,8 @@ def test_fetch_returns_dataframe_with_expected_columns(monkeypatch):
     }
 
     class MockResponse:
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
