@@ -33,6 +33,26 @@ def fetch_weather() -> tuple[pd.DataFrame, dict]:
     return df, daily
 
 
+@st.cache_data(ttl=600)
+def fetch_air_quality() -> pd.DataFrame:
+    params = {
+        "latitude": LAT,
+        "longitude": LON,
+        "hourly": "us_aqi,pm2_5,pm10",
+        "past_hours": 24,
+        "forecast_days": 3,
+        "timezone": TIMEZONE,
+    }
+    resp = requests.get("https://air-quality-api.open-meteo.com/v1/air-quality", params=params)
+    resp.raise_for_status()
+    result = resp.json()
+    df = pd.DataFrame(result["hourly"])
+    df["time"] = pd.to_datetime(df["time"])
+    df = df.set_index("time")
+    df.index = df.index.tz_localize(TIMEZONE)
+    return df
+
+
 def c_to_f(c: float) -> float:
     return c * 9 / 5 + 32
 
@@ -94,6 +114,20 @@ def compute_wet_bulb(temp_c: float, rh: float) -> float:
     )
 
 
+def aqi_category(aqi: float) -> str:
+    if aqi <= 50:
+        return "Good"
+    if aqi <= 100:
+        return "Moderate"
+    if aqi <= 150:
+        return "Unhealthy (Sensitive)"
+    if aqi <= 200:
+        return "Unhealthy"
+    if aqi <= 300:
+        return "Very Unhealthy"
+    return "Hazardous"
+
+
 def current_conditions_summary(temp: float, rh: float, hi: float, precip: float) -> str:
     parts = []
     if hi >= 39:
@@ -151,13 +185,13 @@ def time_of_day_label(hour: int) -> str:
     return "Night"
 
 
-def build_forecast_chart(df: pd.DataFrame) -> go.Figure:
+def build_forecast_chart(df: pd.DataFrame, aqi_df: pd.DataFrame = None) -> go.Figure:
     from plotly.subplots import make_subplots
 
     fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True,
-        row_heights=[0.5, 0.25, 0.25], vertical_spacing=0.04,
-        specs=[[{"secondary_y": True}], [{"secondary_y": True}], [{}]],
+        rows=4, cols=1, shared_xaxes=True,
+        row_heights=[0.4, 0.2, 0.2, 0.2], vertical_spacing=0.04,
+        specs=[[{"secondary_y": True}], [{"secondary_y": True}], [{}], [{}]],
     )
 
     fig.add_trace(go.Scatter(
@@ -218,17 +252,35 @@ def build_forecast_chart(df: pd.DataFrame) -> go.Figure:
         name="UV Index", marker_color=uv_colors,
     ), row=3, col=1)
 
+    if aqi_df is not None:
+        aqi_slice = aqi_df.reindex(df.index, method="nearest")
+        aqi_vals = aqi_slice["us_aqi"].fillna(0)
+        aqi_colors = [
+            "#4CAF50" if v <= 50 else
+            "#FFC107" if v <= 100 else
+            "#FF9800" if v <= 150 else
+            "#F44336" if v <= 200 else
+            "#9C27B0" if v <= 300 else
+            "#7E0023"
+            for v in aqi_vals
+        ]
+        fig.add_trace(go.Bar(
+            x=df.index, y=aqi_vals,
+            name="AQI", marker_color=aqi_colors,
+        ), row=4, col=1)
+
     fig.update_yaxes(title_text="Temperature (°C)", row=1, col=1, secondary_y=False)
     fig.update_yaxes(title_text="Humidity (%)", range=[0, 100], row=1, col=1, secondary_y=True)
     fig.update_yaxes(title_text="Cloud (%)", range=[0, 100], row=2, col=1, secondary_y=False)
     fig.update_yaxes(title_text="Rain/Wind", row=2, col=1, secondary_y=True)
     fig.update_yaxes(title_text="UV", row=3, col=1)
+    fig.update_yaxes(title_text="AQI", row=4, col=1)
 
     fig.update_layout(
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         margin=dict(l=40, r=40, t=30, b=40),
         hovermode="x unified",
-        height=650,
+        height=800,
     )
 
     return fig
@@ -239,6 +291,7 @@ def main():
     st.title("Paper Town Weather")
 
     df, daily = fetch_weather()
+    aqi_df = fetch_air_quality()
 
     now = datetime.now(pytz.timezone(TIMEZONE))
     current_idx = df.index.get_indexer([now], method="nearest")[0]
@@ -251,6 +304,10 @@ def main():
     wb = compute_wet_bulb(temp, rh)
     apparent = current["apparent_temperature"]
 
+    aqi_idx = aqi_df.index.get_indexer([now], method="nearest")[0]
+    aqi_current = aqi_df.iloc[aqi_idx]
+    aqi = aqi_current["us_aqi"]
+
     summary = current_conditions_summary(temp, rh, hi, precip)
     st.markdown(f"*{summary}*")
 
@@ -260,14 +317,15 @@ def main():
 
     wind = current["wind_speed_10m"]
 
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
     col1.metric("Temperature", f"{temp:.1f} °C")
     col2.metric("Heat Index", f"{hi:.1f} °C", delta=f"{hi - temp:+.1f} °C from actual", delta_color="inverse")
     col3.metric("Apparent Temp", f"{apparent:.1f} °C", delta=f"{apparent - temp:+.1f} °C from actual", delta_color="inverse")
     col4.metric("Wet Bulb Temp", f"{wb:.1f} °C")
     col5.metric("Humidity", f"{rh:.0f}%")
     col6.metric("Wind", f"{wind:.0f} km/h")
-    col7.metric("Sunrise / Sunset", f"{sunrise} / {sunset}")
+    col7.metric("Air Quality", f"{aqi:.0f} AQI")
+    col8.metric("Sunrise / Sunset", f"{sunrise} / {sunset}")
 
     df["heat_index"] = df.apply(
         lambda row: compute_heat_index(row["temperature_2m"], row["relative_humidity_2m"]),
@@ -280,7 +338,7 @@ def main():
 
     st.subheader("3-Day Forecast")
     future = df[(df.index >= now) & (df.index <= now + pd.Timedelta(hours=72))]
-    fig = build_forecast_chart(future)
+    fig = build_forecast_chart(future, aqi_df)
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Best Outdoor Times")
