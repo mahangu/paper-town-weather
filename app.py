@@ -53,6 +53,23 @@ def fetch_air_quality() -> pd.DataFrame:
     return df
 
 
+HISTORICAL_URL = "https://raw.githubusercontent.com/nuuuwan/weather_lk/data/data_by_place/81.70E-7.72N-Batticaloa.json"
+
+
+@st.cache_data(ttl=3600)
+def fetch_historical() -> pd.DataFrame | None:
+    try:
+        resp = requests.get(HISTORICAL_URL, timeout=10)
+        resp.raise_for_status()
+        records = resp.json()
+        df = pd.DataFrame(records)
+        df["date"] = pd.to_datetime(df["date"])
+        df["month"] = df["date"].dt.month
+        return df
+    except Exception:
+        return None
+
+
 def c_to_f(c: float) -> float:
     return c * 9 / 5 + 32
 
@@ -292,6 +309,7 @@ def main():
 
     df, daily = fetch_weather()
     aqi_df = fetch_air_quality()
+    hist_df = fetch_historical()
 
     now = datetime.now(pytz.timezone(TIMEZONE))
     current_idx = df.index.get_indexer([now], method="nearest")[0]
@@ -361,6 +379,27 @@ def main():
                     st.success(f"**{tod}:** {start}–{end} ({w['hours']}h, avg {w['avg_hi']}°C)")
             else:
                 st.warning("No comfortable windows")
+
+    if hist_df is not None:
+        month = now.month
+        month_data = hist_df[hist_df["month"] == month]
+        if len(month_data) > 0:
+            avg_max = month_data["max_temp"].mean()
+            avg_min = month_data["min_temp"].mean()
+            avg_rain = month_data["rain"].mean()
+            rain_days_pct = (month_data["rain"] > 0).mean() * 100
+            record_high = month_data["max_temp"].max()
+            record_low = month_data["min_temp"].min()
+
+            st.subheader(f"Historical — {now.strftime('%B')} in Batticaloa")
+            hc1, hc2, hc3, hc4, hc5, hc6 = st.columns(6)
+            hc1.metric("Avg High", f"{avg_max:.1f} °C", delta=f"{temp - avg_max:+.1f} °C today", delta_color="inverse")
+            hc2.metric("Avg Low", f"{avg_min:.1f} °C")
+            hc3.metric("Avg Rain", f"{avg_rain:.1f} mm/day")
+            hc4.metric("Rain Days", f"{rain_days_pct:.0f}%")
+            hc5.metric("Record High", f"{record_high:.1f} °C")
+            hc6.metric("Record Low", f"{record_low:.1f} °C")
+            st.caption(f"Based on {len(month_data)} days of {now.strftime('%B')} data (2018–2026) from Sri Lanka Met Dept, Batticaloa station")
 
     st.caption(f"Last refreshed: {now.strftime('%Y-%m-%d %H:%M')} IST  ·  Location: {LAT}, {LON}")
 
