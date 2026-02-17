@@ -60,6 +60,7 @@ def generate_ai_summary(
     temp: float, rh: float, precip: float, wind: float,
     hi: float, wb: float, aqi: float | None,
     sunrise: str, sunset: str, next_hours_summary: str,
+    avg_high: float | None, avg_low: float | None,
 ) -> str | None:
     import anthropic
 
@@ -67,18 +68,24 @@ def generate_ai_summary(
     if not api_key:
         return None
     client = anthropic.Anthropic(api_key=api_key)
+    historical_ctx = ""
+    if avg_high is not None and avg_low is not None:
+        historical_ctx = f"- Monthly average high: {avg_high:.0f}°C, average low: {avg_low:.0f}°C\n"
     prompt = (
-        f"Current weather conditions:\n"
-        f"- Temperature: {temp:.1f}°C (feels like {hi:.1f}°C heat index)\n"
-        f"- Wet bulb: {wb:.1f}°C\n"
-        f"- Humidity: {rh:.0f}%\n"
-        f"- Wind: {wind:.0f} km/h\n"
-        f"- Precipitation: {precip:.1f} mm/h\n"
-        f"- Air quality: {f'{aqi:.0f} AQI' if aqi is not None else 'unknown'}\n"
+        f"Current conditions:\n"
+        f"- Temperature: {temp:.1f}°C (heat index: {hi:.1f}°C, wet bulb: {wb:.1f}°C)\n"
+        f"- Humidity: {rh:.0f}%, Wind: {wind:.0f} km/h, Rain: {precip:.1f} mm/h\n"
+        f"- AQI: {f'{aqi:.0f}' if aqi is not None else 'N/A'}\n"
         f"- Sunrise: {sunrise}, Sunset: {sunset}\n"
-        f"\nComing up:\n{next_hours_summary}\n"
-        f"\nWrite 2 short, punchy sentences. First: what it feels like right now. "
-        f"Second: what's changing in the next few hours. No comma splices. Keep it under 40 words total."
+        f"{historical_ctx}"
+        f"\nNext 6 hours:\n{next_hours_summary}\n"
+        f"\nThe audience lives here and knows what tropical weather feels like. "
+        f"Do NOT describe heat, humidity, or stickiness — they already know. "
+        f"Only mention rain if non-zero precipitation actually appears in the forecast. "
+        f"Focus on: what's *different* or *notable* compared to the monthly average? "
+        f"Specific weather events with timing? Unusual conditions?\n"
+        f"If nothing notable is happening, just say so briefly.\n"
+        f"Write 1-2 short sentences. No filler. Under 30 words."
     )
     try:
         resp = client.messages.create(
@@ -375,6 +382,13 @@ def main():
     sunset = daily["sunset"][today_idx].split("T")[1]
     wind = current["wind_speed_10m"]
 
+    avg_high, avg_low = None, None
+    if hist_df is not None:
+        month_data = hist_df[hist_df["month"] == now.month]
+        if len(month_data) > 0:
+            avg_high = round(month_data["max_temp"].mean(), 1)
+            avg_low = round(month_data["min_temp"].mean(), 1)
+
     summary = current_conditions_summary(temp, rh, hi, precip)
     st.markdown(f"*{summary}*")
 
@@ -388,7 +402,7 @@ def main():
     ai_summary = generate_ai_summary(
         round(temp, 1), round(rh, 0), round(precip, 1), round(wind, 0),
         round(hi, 1), round(wb, 1), round(aqi, 0) if aqi is not None else None,
-        sunrise, sunset, next_hours_summary,
+        sunrise, sunset, next_hours_summary, avg_high, avg_low,
     )
     if ai_summary:
         st.markdown(ai_summary)
