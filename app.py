@@ -16,7 +16,7 @@ def fetch_weather() -> tuple[pd.DataFrame, dict] | None:
     params = {
         "latitude": LAT,
         "longitude": LON,
-        "hourly": "temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,rain,uv_index,apparent_temperature",
+        "hourly": "temperature_2m,relative_humidity_2m,wind_speed_10m,cloud_cover,precipitation,rain,apparent_temperature",
         "daily": "sunrise,sunset",
         "forecast_days": 3,
         "timezone": TIMEZONE,
@@ -45,6 +45,27 @@ def fetch_air_quality() -> pd.DataFrame | None:
         "timezone": TIMEZONE,
     }
     resp = requests.get("https://air-quality-api.open-meteo.com/v1/air-quality", params=params, timeout=15)
+    if resp.status_code == 429:
+        return None
+    resp.raise_for_status()
+    result = resp.json()
+    df = pd.DataFrame(result["hourly"])
+    df["time"] = pd.to_datetime(df["time"])
+    df = df.set_index("time")
+    df.index = df.index.tz_localize(TIMEZONE)
+    return df
+
+
+@st.cache_data(ttl=600)
+def fetch_uv() -> pd.DataFrame | None:
+    params = {
+        "latitude": LAT,
+        "longitude": LON,
+        "hourly": "uv_index",
+        "forecast_days": 3,
+        "timezone": TIMEZONE,
+    }
+    resp = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=15)
     if resp.status_code == 429:
         return None
     resp.raise_for_status()
@@ -359,6 +380,11 @@ def main():
         st.stop()
     df, daily = weather
     aqi_df = fetch_air_quality()
+    uv_df = fetch_uv()
+    if uv_df is not None:
+        df["uv_index"] = uv_df["uv_index"].reindex(df.index, method="nearest")
+    else:
+        df["uv_index"] = 0
     hist_df = fetch_historical()
 
     now = datetime.now(pytz.timezone(TIMEZONE))
