@@ -20,6 +20,7 @@ def fetch_weather() -> tuple[pd.DataFrame, dict] | None:
         "daily": "sunrise,sunset",
         "forecast_days": 3,
         "timezone": TIMEZONE,
+        "models": "ecmwf_ifs025",
     }
     resp = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=15)
     if resp.status_code == 429:
